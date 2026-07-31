@@ -2,9 +2,10 @@
 in Vox Hub).
 
 Wire format, verified against the real Kotlin server (VoxConnectServer.kt):
-- POST /pair is the only unauthenticated route; its request/response bodies
-  are plain JSON, not encrypted (no session key exists yet).
-- Every other route requires header "Authorization: Bearer <deviceId>".
+- Every route requires header "Authorization: Bearer <deviceId>" — there is
+  no unauthenticated route on this server at all; pairing happens out of
+  band (see pairing/listener.py) via a push to a temporary local HTTP
+  listener this app stands up itself, not via any route on the bridge.
 - Every authenticated POST's request body, and every authenticated route's
   response body, is a single opaque string: crypto.encrypt/decrypt's
   base64(iv || ciphertext || tag) token. There is no JSON wrapper around it —
@@ -43,28 +44,6 @@ class BridgeClient:
 
     def __exit__(self, *exc) -> None:
         self.close()
-
-    # -- pairing -----------------------------------------------------------
-
-    @staticmethod
-    def pair(host: str, port: int, token: str, key_base64: str, label: str = "VoxConnect device") -> PairedDevice:
-        """Completes pairing against a freshly scanned/entered QR payload
-        {ip, port, token, key}. The session key already comes from the QR —
-        this call only exchanges the one-time token for a durable deviceId."""
-        with httpx.Client(base_url=f"http://{host}:{port}", timeout=DEFAULT_TIMEOUT) as http:
-            response = http.post("/pair", json={"token": token, "label": label})
-        if response.status_code != 200:
-            raise BridgeError(f"pairing failed: {response.status_code} {response.text}")
-        data = response.json()
-        if not data.get("ok"):
-            raise BridgeError("pairing failed: server returned ok=false")
-        return PairedDevice(
-            device_id=data["deviceId"],
-            key_base64=key_base64,
-            host=host,
-            port=port,
-            label=label,
-        )
 
     # -- authenticated routes ------------------------------------------------
 

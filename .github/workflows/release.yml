@@ -91,12 +91,6 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Build with PyInstaller
-        # Note: pyzbar (QR scanning) needs the native libzbar shared library,
-        # which PyInstaller does not bundle since it's a system lib, not a
-        # Python package — end users without it installed still get a working
-        # app (pairing/scanner.py degrades to the manual-entry fallback), just
-        # without webcam QR scanning. Not solved here; a future pass could
-        # vendor libzbar per OS if that gap matters enough.
         run: pyinstaller ${{ matrix.pyinstaller_args }} src/voxconnect/app.py
 
       - uses: actions/upload-artifact@v4
