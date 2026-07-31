@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import socket
+import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -45,6 +46,20 @@ def _local_ip() -> str:
         return "127.0.0.1"
     finally:
         sock.close()
+
+
+class _PairServer(HTTPServer):
+    """Plain HTTPServer.server_bind() calls socket.getfqdn() on the bound
+    address to set server_name — a real (and, for 0.0.0.0, often multi-second)
+    reverse-DNS-ish resolution. We never use server_name (request logging is
+    silenced in the handler below), so skip straight to TCPServer's bind and
+    assign a numeric server_name instead of paying for that lookup."""
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
 
 
 class _PairCompleteHandler(BaseHTTPRequestHandler):
@@ -97,7 +112,7 @@ class PairListener(QObject):
         self._thread: threading.Thread | None = None
 
     def start(self) -> tuple[str, int]:
-        server = HTTPServer(("0.0.0.0", 0), _PairCompleteHandler)
+        server = _PairServer(("0.0.0.0", 0), _PairCompleteHandler)
         server.pairing_key = self._key
         server.on_result = self._on_result
         server.on_error = self._on_error
