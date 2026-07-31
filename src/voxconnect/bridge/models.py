@@ -8,7 +8,8 @@ rather than a schema library, since the shape is small and fixed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+import json
+from dataclasses import dataclass, field
 
 
 # VoxCommand.op values
@@ -103,14 +104,60 @@ class AppInfo:
         )
 
 
+# Expense.direction wire values (lowercase — NOT the raw Kotlin enum name)
+DIRECTION_OUTGOING = "outgoing"
+DIRECTION_INCOMING = "incoming"
+
+# VoxResult.text strings for a biometric-locked domain (fixed, one per domain,
+# not a machine-readable error code — see bridge/client.py module docstring).
+LOCKED_MESSAGES = {
+    DOMAIN_NOTES: "Notele sunt blocate. Deblochează aplicația.",
+    DOMAIN_CALENDAR: "Calendarul este blocat. Deblochează aplicația.",
+    DOMAIN_EXPENSES: "Cheltuielile sunt blocate. Deblochează aplicația.",
+}
+
+
+def is_locked(domain: str, result: VoxResult) -> bool:
+    return not result.ok and result.text == LOCKED_MESSAGES.get(domain)
+
+
+@dataclass
+class Tombstone:
+    uid: str
+    deleted_at: int
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Tombstone":
+        return cls(uid=data["uid"], deleted_at=data["deletedAt"])
+
+
+@dataclass
+class SyncResult:
+    """The parsed envelope of a sync_export/sync_merge VoxResult.text — the
+    raw wire dicts for `entries` (still domain-shaped, parsed further by
+    CalendarEntry/Expense/Note.from_dict) plus the uid/deletedAt tombstones."""
+
+    entries: list[dict]
+    tombstones: list[Tombstone]
+
+    @classmethod
+    def from_json_text(cls, text: str) -> "SyncResult":
+        data = json.loads(text)
+        return cls(
+            entries=list(data.get("entries", [])),
+            tombstones=[Tombstone.from_dict(t) for t in data.get("tombstones", [])],
+        )
+
+
 @dataclass
 class CalendarEntry:
-    id: int
+    """sync_export shape — NOT the app-internal Room entity (no numeric id,
+    layer travels by name)."""
+
     uid: str
     type: str  # EVENT | TASK
     title: str
     start_millis: int
-    layer_id: int
     created_at: int
     updated_at: int
     description: str | None = None
@@ -120,11 +167,12 @@ class CalendarEntry:
     completed: bool = False
     recurrence_frequency: str = "NONE"
     recurrence_until_millis: int | None = None
+    layer_name: str | None = None
+    tags: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> "CalendarEntry":
         return cls(
-            id=data["id"],
             uid=data["uid"],
             type=data["type"],
             title=data["title"],
@@ -136,15 +184,45 @@ class CalendarEntry:
             completed=data.get("completed", False),
             recurrence_frequency=data.get("recurrenceFrequency", "NONE"),
             recurrence_until_millis=data.get("recurrenceUntilMillis"),
-            layer_id=data["layerId"],
+            layer_name=data.get("layerName"),
+            tags=list(data.get("tags", [])),
             created_at=data["createdAt"],
             updated_at=data["updatedAt"],
         )
 
 
 @dataclass
+class ExpenseLineItem:
+    """No uid/updatedAt of its own — travels with the parent expense, no
+    independent sync identity."""
+
+    name: str
+    quantity: float
+    unit_price: float
+    position: int
+    net_amount: float | None = None
+    vat_amount: float | None = None
+    gross_amount: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ExpenseLineItem":
+        return cls(
+            name=data["name"],
+            quantity=data["quantity"],
+            unit_price=data["unitPrice"],
+            position=data["position"],
+            net_amount=data.get("netAmount"),
+            vat_amount=data.get("vatAmount"),
+            gross_amount=data.get("grossAmount"),
+        )
+
+
+@dataclass
 class Expense:
-    id: int
+    """sync_export shape — category travels by name, direction is the
+    lowercase wire value (DIRECTION_OUTGOING/DIRECTION_INCOMING), not the raw
+    Kotlin enum name."""
+
     uid: str
     total_amount: float
     currency_code: str
@@ -156,17 +234,15 @@ class Expense:
     bank: str | None = None
     location: str | None = None
     comments: str | None = None
-    category_id: int | None = None
-    direction: str = "OUTGOING"  # OUTGOING | INCOMING
+    category_name: str | None = None
+    direction: str = DIRECTION_OUTGOING
     receipt_image_name: str | None = None
     is_stub: bool = False
-    source: str = "MANUAL"
-    manually_edited: bool = False
+    line_items: list[ExpenseLineItem] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Expense":
         return cls(
-            id=data["id"],
             uid=data["uid"],
             title=data.get("title"),
             total_amount=data["totalAmount"],
@@ -176,37 +252,52 @@ class Expense:
             location=data.get("location"),
             date_time=data["dateTime"],
             comments=data.get("comments"),
-            category_id=data.get("categoryId"),
-            direction=data.get("direction", "OUTGOING"),
+            category_name=data.get("categoryName"),
+            direction=data.get("direction", DIRECTION_OUTGOING),
             receipt_image_name=data.get("receiptImageName"),
             is_stub=data.get("isStub", False),
             created_at=data["createdAt"],
             updated_at=data["updatedAt"],
-            source=data.get("source", "MANUAL"),
-            manually_edited=data.get("manuallyEdited", False),
+            line_items=[ExpenseLineItem.from_dict(i) for i in data.get("lineItems", [])],
         )
 
 
 @dataclass
 class Note:
-    id: int
+    """sync_export shape — category travels by name; no isStub field (unlike
+    Calendar/Expenses)."""
+
     uid: str
     text: str
     created_at: int
     updated_at: int
     title: str | None = None
-    category_id: int | None = None
-    is_stub: bool = False
+    category_name: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "Note":
         return cls(
-            id=data["id"],
             uid=data["uid"],
             title=data.get("title"),
             text=data["text"],
+            category_name=data.get("categoryName"),
             created_at=data["createdAt"],
-            category_id=data.get("categoryId"),
             updated_at=data["updatedAt"],
-            is_stub=data.get("isStub", False),
+        )
+
+
+@dataclass
+class NowPlaying:
+    playing: bool
+    package_name: str | None = None
+    title: str | None = None
+    artist: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "NowPlaying":
+        return cls(
+            playing=bool(data.get("playing", False)),
+            package_name=data.get("packageName"),
+            title=data.get("title"),
+            artist=data.get("artist"),
         )

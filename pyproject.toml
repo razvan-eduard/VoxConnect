@@ -19,6 +19,7 @@ dependencies = [
     "opencv-python>=4.9",
     "pyzbar>=0.1.9",
     "platformdirs>=4.2",
+    "keyring>=25.0",
 ]
 
 [project.optional-dependencies]

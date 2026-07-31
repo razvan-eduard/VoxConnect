@@ -7,6 +7,7 @@ remembers who we're paired with and where the dashboard's cards are.
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -65,3 +66,21 @@ def clear_paired_device() -> None:
     data = json.loads(path.read_text())
     data.pop("paired_device", None)
     path.write_text(json.dumps(data, indent=2))
+
+
+def save_layout(data: bytes) -> None:
+    path = _settings_path()
+    settings_data = json.loads(path.read_text()) if path.exists() else {}
+    settings_data["dashboard_layout"] = base64.b64encode(data).decode("ascii")
+    path.write_text(json.dumps(settings_data, indent=2))
+
+
+def load_layout() -> bytes | None:
+    path = _settings_path()
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    encoded = data.get("dashboard_layout")
+    if not encoded:
+        return None
+    return base64.b64decode(encoded)
