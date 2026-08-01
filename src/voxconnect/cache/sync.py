@@ -19,7 +19,7 @@ from voxconnect.bridge.models import (
     VoxResult,
     is_locked,
 )
-from voxconnect.cache.store import DOMAINS, CacheStore
+from voxconnect.cache.store import CacheStore
 from voxconnect.util.workers import run_in_background
 
 DEFAULT_INTERVAL_MS = 60_000
@@ -45,15 +45,24 @@ class SyncEngine(QObject):
         self,
         client: BridgeClient,
         cache: CacheStore,
+        domains: list[str],
         interval_ms: int = DEFAULT_INTERVAL_MS,
         parent: QObject | None = None,
     ):
         super().__init__(parent)
         self._client = client
         self._cache = cache
+        self._domains = domains
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self.sync_all)
+
+    def add_domains(self, domains: list[str]) -> None:
+        """Extends the polled domain set at runtime — used when discovery finds a domain that
+        wasn't known at construction time (see DashboardWindow.add_domains)."""
+        for d in domains:
+            if d not in self._domains:
+                self._domains.append(d)
 
     def start(self) -> None:
         self.sync_all()
@@ -63,11 +72,11 @@ class SyncEngine(QObject):
         self._timer.stop()
 
     def sync_all(self) -> None:
-        for domain in DOMAINS:
+        for domain in self._domains:
             self._sync_domain(domain, since=self._cache.last_synced_at(domain), full_refresh=False)
 
     def force_full_refresh(self, domain: str | None = None) -> None:
-        domains = [domain] if domain else list(DOMAINS)
+        domains = [domain] if domain else list(self._domains)
         for d in domains:
             self._sync_domain(d, since=0, full_refresh=True)
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 import json
+import socket
 
 import qrcode
 from PySide6.QtCore import Qt, QTimer
@@ -185,7 +186,10 @@ class PairingWizard(QDialog):
                 return
             host, port = host_port
             key_base64 = crypto.key_to_base64(key)
-            payload = {"ip": host, "port": port, "key": key_base64}
+            # This machine's hostname rides along so Hub can show a real name for the paired PC
+            # (renamable afterward) instead of a hardcoded "PC" label — see VoxConnectPairing.kt
+            # on the Android side, which reads this same "hostname" key.
+            payload = {"ip": host, "port": port, "key": key_base64, "hostname": socket.gethostname()}
             self._qr_label.setPixmap(_build_qr_pixmap(json.dumps(payload)))
             self._ip_field.setText(host)
             self._port_field.setText(str(port))

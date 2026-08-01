@@ -22,6 +22,7 @@ OP_GET_SCHEMA = "get_schema"
 OP_SYNC_EXPORT = "sync_export"
 OP_SYNC_MERGE = "sync_merge"
 OP_MEDIA_CONTROL = "media_control"
+OP_GET_FIELD_SCHEMA = "get_field_schema"
 
 # VoxCommand.exportScope values
 EXPORT_SCOPE_SETTINGS = "settings"
@@ -104,6 +105,79 @@ class AppInfo:
         )
 
 
+# FormField.type values — see VoxFormSchema.kt (core/ipc) for the wire-side source of truth.
+FIELD_TYPE_TEXT = "text"
+FIELD_TYPE_NUMBER = "number"
+FIELD_TYPE_DATETIME = "datetime"
+FIELD_TYPE_BOOL = "bool"
+FIELD_TYPE_ENUM = "enum"
+FIELD_TYPE_CATEGORY = "category"
+FIELD_TYPE_TAGS = "tags"
+FIELD_TYPE_LIST = "list"
+FIELD_TYPE_READONLY = "readonly"
+
+
+@dataclass
+class FormField:
+    """One editable field of a domain's record type, as advertised by OP_GET_FIELD_SCHEMA. `options`
+    holds fixed choices for `enum` fields or the satellite's live category/layer names for
+    `category` fields — both rendered as a QComboBox, the distinction is purely descriptive.
+    `item_fields` is only present for `type == "list"` (e.g. an expense's line items) and describes
+    each repeated row's own fields, recursively — nesting never goes deeper than one level in
+    practice, so `FormField` doesn't bother forbidding it structurally."""
+
+    key: str
+    label: str
+    type: str
+    required: bool = False
+    options: list[str] = field(default_factory=list)
+    item_fields: list["FormField"] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FormField":
+        return cls(
+            key=data["key"],
+            label=data.get("label", data["key"]),
+            type=data.get("type", FIELD_TYPE_TEXT),
+            required=bool(data.get("required", False)),
+            options=list(data.get("options", [])),
+            item_fields=[FormField.from_dict(f) for f in data.get("itemFields", [])],
+        )
+
+
+@dataclass
+class DomainSchema:
+    """A domain's full OP_GET_FIELD_SCHEMA response — enough for a generic card/form to render and
+    edit records without any per-domain Python code. `title_field`/`title_fallback_field` pick the
+    row's headline (falling back to the second if the first is blank); `subtitle_fields` are joined
+    with " · " for the metadata line; `sort_field`/`sort_descending` order the list;
+    `upcoming_only_field`, if set, hides records whose value for that field is in the past (this is
+    calendar's "only show upcoming events" behavior, generalized as an opt-in rather than hardcoded
+    calendar-specific logic)."""
+
+    domain: str
+    title_field: str
+    fields: list[FormField]
+    title_fallback_field: str | None = None
+    subtitle_fields: list[str] = field(default_factory=list)
+    sort_field: str | None = None
+    sort_descending: bool = True
+    upcoming_only_field: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DomainSchema":
+        return cls(
+            domain=data["domain"],
+            title_field=data["titleField"],
+            title_fallback_field=data.get("titleFallbackField"),
+            subtitle_fields=list(data.get("subtitleFields", [])),
+            sort_field=data.get("sortField"),
+            sort_descending=bool(data.get("sortDescending", True)),
+            upcoming_only_field=data.get("upcomingOnlyField"),
+            fields=[FormField.from_dict(f) for f in data.get("fields", [])],
+        )
+
+
 # Expense.direction wire values (lowercase — NOT the raw Kotlin enum name)
 DIRECTION_OUTGOING = "outgoing"
 DIRECTION_INCOMING = "incoming"
@@ -119,6 +193,22 @@ LOCKED_MESSAGES = {
 
 def is_locked(domain: str, result: VoxResult) -> bool:
     return not result.ok and result.text == LOCKED_MESSAGES.get(domain)
+
+
+# VoxResult.text for media_control when Commander's notification-listener permission isn't
+# granted — see vox-commander's MediaControlIpcHandler.kt. This is a phone-side permission (Vox
+# Commander, not VoxConnect itself), so the desktop can't request it directly; MediaCard just
+# tells the user where to go on the phone — see MEDIA_PERMISSION_INSTRUCTIONS.
+MEDIA_PERMISSION_NOT_GRANTED = "notification access not granted"
+MEDIA_PERMISSION_INSTRUCTIONS = (
+    "Media control needs notification access on your phone.\n"
+    "On your phone: Settings → Apps → Special access → Notification access → "
+    "enable Vox Commander."
+)
+
+
+def is_media_permission_missing(result: VoxResult) -> bool:
+    return not result.ok and result.text == MEDIA_PERMISSION_NOT_GRANTED
 
 
 @dataclass
@@ -190,6 +280,29 @@ class CalendarEntry:
             updated_at=data["updatedAt"],
         )
 
+    def to_dict(self) -> dict:
+        """Mirror of from_dict, for pushing an edit back via sync_merge — see
+        bridge/client.py's push_edit. Caller must bump updated_at before
+        sending (sync_merge silently ignores a tie or older value)."""
+        d = {
+            "uid": self.uid,
+            "type": self.type,
+            "title": self.title,
+            "description": self.description,
+            "location": self.location,
+            "startMillis": self.start_millis,
+            "endMillis": self.end_millis,
+            "allDay": self.all_day,
+            "completed": self.completed,
+            "recurrenceFrequency": self.recurrence_frequency,
+            "recurrenceUntilMillis": self.recurrence_until_millis,
+            "layerName": self.layer_name,
+            "tags": self.tags,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+        }
+        return {k: v for k, v in d.items() if v is not None}
+
 
 @dataclass
 class ExpenseLineItem:
@@ -215,6 +328,18 @@ class ExpenseLineItem:
             vat_amount=data.get("vatAmount"),
             gross_amount=data.get("grossAmount"),
         )
+
+    def to_dict(self) -> dict:
+        d = {
+            "name": self.name,
+            "quantity": self.quantity,
+            "unitPrice": self.unit_price,
+            "position": self.position,
+            "netAmount": self.net_amount,
+            "vatAmount": self.vat_amount,
+            "grossAmount": self.gross_amount,
+        }
+        return {k: v for k, v in d.items() if v is not None}
 
 
 @dataclass
@@ -261,6 +386,31 @@ class Expense:
             line_items=[ExpenseLineItem.from_dict(i) for i in data.get("lineItems", [])],
         )
 
+    def to_dict(self) -> dict:
+        """Mirror of from_dict. lineItems is always included (even empty) —
+        sync_merge replaces that list wholesale, not field-by-field, so
+        omitting it would silently wipe existing items on the phone."""
+        d = {
+            "uid": self.uid,
+            "title": self.title,
+            "totalAmount": self.total_amount,
+            "currencyCode": self.currency_code,
+            "vendor": self.vendor,
+            "bank": self.bank,
+            "location": self.location,
+            "dateTime": self.date_time,
+            "comments": self.comments,
+            "categoryName": self.category_name,
+            "direction": self.direction,
+            "receiptImageName": self.receipt_image_name,
+            "isStub": self.is_stub,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+        }
+        result = {k: v for k, v in d.items() if v is not None}
+        result["lineItems"] = [item.to_dict() for item in self.line_items]
+        return result
+
 
 @dataclass
 class Note:
@@ -285,13 +435,31 @@ class Note:
             updated_at=data["updatedAt"],
         )
 
+    def to_dict(self) -> dict:
+        d = {
+            "uid": self.uid,
+            "title": self.title,
+            "text": self.text,
+            "categoryName": self.category_name,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+        }
+        return {k: v for k, v in d.items() if v is not None}
+
 
 @dataclass
 class NowPlaying:
+    """`albumArtBase64` (JPEG, pre-downscaled by MediaControlIpcHandler.kt) and
+    `position`/`duration` are all optional — many sessions/apps don't populate one or more of
+    them; absence isn't an error, just nothing to render for that part."""
+
     playing: bool
     package_name: str | None = None
     title: str | None = None
     artist: str | None = None
+    album_art_base64: str | None = None
+    position_millis: int | None = None
+    duration_millis: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "NowPlaying":
@@ -300,4 +468,7 @@ class NowPlaying:
             package_name=data.get("packageName"),
             title=data.get("title"),
             artist=data.get("artist"),
+            album_art_base64=data.get("albumArtBase64"),
+            position_millis=data.get("positionMillis"),
+            duration_millis=data.get("durationMillis"),
         )

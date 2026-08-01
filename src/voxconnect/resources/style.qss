@@ -1,0 +1,107 @@
+/* Layered on top of qt-material's dark_teal theme (see app.py) — only the overrides that
+ * qt-material doesn't already cover: card-style row items instead of boxed/bordered rows,
+ * a title/metadata typographic hierarchy (see ClickableRow, and each card's _build_row()),
+ * borderless icon transport buttons, and de-emphasized dock/splitter separators. */
+
+/* Card containers: rounded, slightly elevated above the window background */
+QDockWidget > QWidget {
+    background-color: rgba(255, 255, 255, 8);
+    border-radius: 8px;
+}
+
+QDockWidget::title {
+    padding: 6px 8px;
+    font-weight: bold;
+}
+
+/* Row items (ClickableRow, see widgets/cards/base.py): no boxed border — just a soft hover
+ * highlight, so the list reads as a list, not a spreadsheet. */
+ClickableRow {
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+}
+ClickableRow:hover {
+    background-color: rgba(255, 255, 255, 18);
+}
+
+/* Typographic hierarchy — set via `label.setProperty("class", "title"/"metadata")` in each
+ * card's _build_row(), not hardcoded per-label inline styles. */
+QLabel[class="title"] {
+    color: white;
+    font-size: 13px;
+    font-weight: bold;
+}
+QLabel[class="metadata"] {
+    color: rgba(255, 255, 255, 130);
+    font-size: 11px;
+}
+
+/* Media transport controls: icon-only, no visible button chrome until hovered/pressed. */
+QPushButton[class="transport"] {
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    padding: 6px;
+}
+QPushButton[class="transport"]:hover {
+    background-color: rgba(255, 255, 255, 25);
+}
+QPushButton[class="transport"]:pressed {
+    background-color: rgba(255, 255, 255, 40);
+}
+QPushButton[class="transport"]:disabled {
+    background: transparent;
+}
+
+/* Card title-bar action buttons (add/refresh/delete) — QToolButton, not QPushButton, so these
+ * need their own selector rather than reusing [class="transport"]. Color-coded by action so
+ * they read as distinct affordances at a glance, with the same borderless-until-touched chrome
+ * as the transport controls above. */
+QToolButton[class="danger"],
+QToolButton[class="success"],
+QToolButton[class="warning"] {
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    padding: 4px;
+    font-weight: bold;
+}
+QToolButton[class="danger"] {
+    color: #e57373;
+}
+QToolButton[class="danger"]:hover {
+    background-color: rgba(229, 115, 115, 40);
+}
+QToolButton[class="danger"]:pressed {
+    background-color: rgba(229, 115, 115, 70);
+}
+QToolButton[class="success"] {
+    color: #81c784;
+}
+QToolButton[class="success"]:hover {
+    background-color: rgba(129, 199, 132, 40);
+}
+QToolButton[class="success"]:pressed {
+    background-color: rgba(129, 199, 132, 70);
+}
+QToolButton[class="warning"] {
+    color: #ffd54f;
+}
+QToolButton[class="warning"]:hover {
+    background-color: rgba(255, 213, 79, 40);
+}
+QToolButton[class="warning"]:pressed {
+    background-color: rgba(255, 213, 79, 70);
+}
+
+/* Dock/splitter separators (the drag handles between docked cards) — present but quiet, not a
+ * bright dotted line competing with real UI. */
+QMainWindow::separator {
+    background-color: rgba(255, 255, 255, 15);
+    width: 3px;
+    height: 3px;
+}
+QMainWindow::separator:hover {
+    background-color: rgba(255, 255, 255, 45);
+}

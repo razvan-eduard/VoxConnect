@@ -1,12 +1,14 @@
 """Client for the bridge's `WS /events` endpoint.
 
-Per the real Kotlin server (VoxConnectServer.kt): the path is exactly
-`/events`, mounted with no authentication at all (not even the
-`Authorization: Bearer <deviceId>` header every other route requires), and
-today it accepts the upgrade and pushes nothing — no message envelope is
-defined yet. Domain-data freshness is handled entirely by cache/sync.py's
-polling; this client only feeds the Notifications card's connection state
-and (once the server side grows a real envelope) whatever it starts pushing.
+Per the real Kotlin server (VoxConnectServer.kt): the path is `/events`,
+gated by the same `Authorization: Bearer <deviceId>` header every other
+route requires (checked manually right after the upgrade, since Ktor's
+`webSocket {}` DSL has no route-level auth hook). Today it pushes one real
+event, `{"op": "monitored_domains_changed", "domains": [...]}`, whenever
+Hub's monitored-apps toggles change — see dashboard.py's `_on_bridge_event`
+for what reacts to it. Domain-data freshness itself is still handled by
+cache/sync.py's polling; this client just feeds the Notifications card's
+connection state and forwards whatever the server pushes.
 
 Not a QThread — websockets is asyncio-native, so this runs a daemon thread
 with its own event loop; only the Qt signal emissions need to cross back to
@@ -76,6 +78,7 @@ class EventsClient(QObject):
     async def _run_forever(self) -> None:
         self._task = asyncio.current_task()
         url = f"ws://{self._device.host}:{self._device.port}/events"
+        headers = {"Authorization": f"Bearer {self._device.device_id}"}
         backoff = 1.0
         first_attempt = True
         try:
@@ -84,7 +87,7 @@ class EventsClient(QObject):
                 self.state_changed.emit(state.value)
                 try:
                     async with websockets.connect(
-                        url, open_timeout=10, ping_interval=20, ping_timeout=20
+                        url, additional_headers=headers, open_timeout=10, ping_interval=20, ping_timeout=20
                     ) as ws:
                         self.state_changed.emit(ConnectionState.CONNECTED.value)
                         backoff = 1.0
@@ -96,7 +99,9 @@ class EventsClient(QObject):
                 if self._stop_event.is_set():
                     break
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30.0)
+                # Capped low (not the more typical 30s+) so a phone that drops off WiFi and comes
+                # back is noticed within a few seconds, not up to half a minute later.
+                backoff = min(backoff * 2, 5.0)
         except asyncio.CancelledError:
             pass
         finally:

@@ -18,14 +18,12 @@ import keyring
 from platformdirs import user_data_dir
 
 from voxconnect.bridge import crypto
-from voxconnect.bridge.models import DOMAIN_CALENDAR, DOMAIN_EXPENSES, DOMAIN_NOTES, Tombstone
+from voxconnect.bridge.models import Tombstone
 
 APP_NAME = "VoxConnect"
 APP_AUTHOR = "razvan-eduard"
 KEYRING_SERVICE = "VoxConnect"
 KEYRING_USERNAME = "cache-key"
-
-DOMAINS = (DOMAIN_CALENDAR, DOMAIN_EXPENSES, DOMAIN_NOTES)
 
 
 def _cache_dir() -> Path:
@@ -52,10 +50,18 @@ def _empty_domain() -> dict:
 
 
 class CacheStore:
+    """Domain-agnostic — the set of domains isn't known upfront (it's discovered dynamically per
+    session, see BridgeClient.get_apps()), so every domain key is created lazily on first access
+    rather than pre-declared. A never-before-seen domain just starts out empty; there's nothing to
+    validate against."""
+
     def __init__(self) -> None:
         self._key = _load_or_create_key()
-        self._data: dict[str, dict] = {domain: _empty_domain() for domain in DOMAINS}
+        self._data: dict[str, dict] = {}
         self.load()
+
+    def _domain(self, domain: str) -> dict:
+        return self._data.setdefault(domain, _empty_domain())
 
     # -- persistence ---------------------------------------------------------
 
@@ -70,9 +76,8 @@ class CacheStore:
             # rather than crash; the next sync repopulates it from scratch.
             return
         raw = json.loads(plaintext)
-        for domain in DOMAINS:
-            if domain in raw:
-                self._data[domain] = raw[domain]
+        for domain, data in raw.items():
+            self._data[domain] = data
 
     def save(self) -> None:
         plaintext = json.dumps(self._data)
@@ -86,7 +91,7 @@ class CacheStore:
         """Wipes cached data and the encryption key — used when forgetting a
         paired device, so a stale phone's data never lingers for whoever
         pairs next."""
-        self._data = {domain: _empty_domain() for domain in DOMAINS}
+        self._data = {}
         path = _cache_path()
         if path.exists():
             path.unlink()
@@ -99,23 +104,23 @@ class CacheStore:
     # -- domain data ----------------------------------------------------------
 
     def get_entries(self, domain: str) -> list[dict]:
-        return list(self._data[domain]["entries"].values())
+        return list(self._domain(domain)["entries"].values())
 
     def upsert_entries(self, domain: str, entries: list[dict]) -> None:
-        entries_by_uid = self._data[domain]["entries"]
+        entries_by_uid = self._domain(domain)["entries"]
         for entry in entries:
             entries_by_uid[entry["uid"]] = entry
 
     def apply_tombstones(self, domain: str, tombstones: list[Tombstone]) -> None:
-        entries_by_uid = self._data[domain]["entries"]
+        entries_by_uid = self._domain(domain)["entries"]
         for tombstone in tombstones:
             entries_by_uid.pop(tombstone.uid, None)
 
     def replace_domain(self, domain: str, entries: list[dict]) -> None:
-        self._data[domain]["entries"] = {entry["uid"]: entry for entry in entries}
+        self._domain(domain)["entries"] = {entry["uid"]: entry for entry in entries}
 
     def last_synced_at(self, domain: str) -> int:
-        return self._data[domain]["last_synced_at"]
+        return self._domain(domain)["last_synced_at"]
 
     def set_last_synced_at(self, domain: str, value: int) -> None:
-        self._data[domain]["last_synced_at"] = value
+        self._domain(domain)["last_synced_at"] = value

@@ -20,11 +20,12 @@ dependencies = [
     "Pillow>=10.0",
     "platformdirs>=4.2",
     "keyring>=25.0",
+    "qt-material>=2.14",
 ]
 
 [project.optional-dependencies]
 mock = ["aiohttp>=3.9"]
-dev = ["pytest>=8.0", "pyinstaller>=6.6"]
+dev = ["pytest>=8.0", "pyinstaller>=6.6", "pytest-qt>=4.4"]
 
 [project.scripts]
 voxconnect = "voxconnect.app:main"

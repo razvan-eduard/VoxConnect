@@ -74,9 +74,16 @@ jobs:
             # PyInstaller's static import analysis typically misses — without
             # this, the packaged binary can't find a keyring backend at runtime.
             pyinstaller_args: --windowed --onefile --name VoxConnect --hidden-import keyring.backends.Windows
+          # macos-latest is an Apple Silicon (arm64) runner and PyInstaller doesn't cross-compile or
+          # produce universal2 binaries by default, so a single macOS entry would only launch on
+          # Apple Silicon Macs — split into two explicit architecture builds instead. Each needs its
+          # own --name so the two uploads don't collide.
           - os: macos-latest
-            artifact_name: VoxConnect-macos
-            pyinstaller_args: --windowed --onefile --name VoxConnect --hidden-import keyring.backends.macOS
+            artifact_name: VoxConnect-macos-arm64
+            pyinstaller_args: --windowed --onefile --name VoxConnect-macos-arm64 --hidden-import keyring.backends.macOS
+          - os: macos-13
+            artifact_name: VoxConnect-macos-x64
+            pyinstaller_args: --windowed --onefile --name VoxConnect-macos-x64 --hidden-import keyring.backends.macOS
           - os: ubuntu-latest
             artifact_name: VoxConnect-linux
             pyinstaller_args: --onefile --name VoxConnect --hidden-import keyring.backends.SecretService
